@@ -480,12 +480,6 @@ For durable pads:
 
 ---
 
-## License / status
-
-Private project (`"private": true` in `package.json`). Adjust licensing before making the repo public if you need a specific license.
-
----
-
 ## Quick mental model
 
 > **Create** → unguessable id + owner secret  
