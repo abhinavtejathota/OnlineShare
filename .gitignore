@@ -1,19 +1,47 @@
 # Dependencies
 node_modules/
+
+# Build output
 dist/
+*.tsbuildinfo
 
-# Secrets
+# Environment / secrets (keep .env.example)
 .env
-.env.local
+.env.*
+!.env.example
+*.pem
+credentials.json
+service-account*.json
 
-# SQLite sidecars (main DB file data/onlineshare.db is kept in the project)
+# SQLite runtime sidecars (main DB data/onlineshare.db is committed as a seed file)
 *.db-journal
 *.db-wal
 *.db-shm
 
-# OS / IDE
+# Logs & debug
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# OS
 .DS_Store
 Thumbs.db
+Desktop.ini
+
+# IDE / editors
 .vscode/
 .idea/
-*.log
+*.swp
+*.swo
+*~
+
+# Optional local tooling
+.turbo/
+.cache/
