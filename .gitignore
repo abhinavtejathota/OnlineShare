@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+dist/
+
+# Secrets
+.env
+.env.local
+
+# SQLite sidecars (main DB file data/onlineshare.db is kept in the project)
+*.db-journal
+*.db-wal
+*.db-shm
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log

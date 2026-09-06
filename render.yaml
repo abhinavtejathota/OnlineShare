@@ -1,0 +1,21 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Connect this repo on Render and use "Apply" with this file, or set the
+# Web Service settings manually to match below.
+
+services:
+  - type: web
+    name: onlineshare
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22.14.0"
+
+# For durable SQLite across deploys, upgrade to a plan with a disk and mount it
+# at /var/data, then set DATA_DIR=/var/data in the service env.
