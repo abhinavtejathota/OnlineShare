@@ -128,11 +128,11 @@ export function CodeEditor({ value, language, onChange, readOnly }: Props) {
           },
           ".cm-scroller": {
             overflow: "auto",
+            height: "100%",
             fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
           },
           ".cm-content": {
-            minHeight: "100%",
-            paddingBottom: "2rem",
+            paddingBottom: "3rem",
           },
           ".cm-gutters": {
             backgroundColor: "#0c1117",
@@ -142,20 +142,11 @@ export function CodeEditor({ value, language, onChange, readOnly }: Props) {
           ".cm-activeLineGutter": { backgroundColor: "#182231" },
           ".cm-activeLine": { backgroundColor: "rgba(24, 34, 49, 0.7)" },
         }),
-        EditorView.contentAttributes.of({
-          // Helps mobile browsers keep the caret/scroll in view
-          spellcheck: "false",
-        }),
       ],
     });
 
     const view = new EditorView({ state, parent: hostRef.current });
     viewRef.current = view;
-
-    // Ensure host fills parent so the scroller gets a bounded height
-    hostRef.current.style.height = "100%";
-    hostRef.current.style.minHeight = "0";
-    hostRef.current.style.overflow = "hidden";
 
     return () => {
       view.destroy();
