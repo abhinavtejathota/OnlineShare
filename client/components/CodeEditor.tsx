@@ -121,7 +121,19 @@ export function CodeEditor({ value, language, onChange, readOnly }: Props) {
           onChangeRef.current(update.state.doc.toString());
         }),
         EditorView.theme({
-          "&": { height: "100%", backgroundColor: "#0c1117" },
+          "&": {
+            height: "100%",
+            maxHeight: "100%",
+            backgroundColor: "#0c1117",
+          },
+          ".cm-scroller": {
+            overflow: "auto",
+            fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+          },
+          ".cm-content": {
+            minHeight: "100%",
+            paddingBottom: "2rem",
+          },
           ".cm-gutters": {
             backgroundColor: "#0c1117",
             borderRight: "1px solid rgba(232, 220, 196, 0.08)",
@@ -130,11 +142,20 @@ export function CodeEditor({ value, language, onChange, readOnly }: Props) {
           ".cm-activeLineGutter": { backgroundColor: "#182231" },
           ".cm-activeLine": { backgroundColor: "rgba(24, 34, 49, 0.7)" },
         }),
+        EditorView.contentAttributes.of({
+          // Helps mobile browsers keep the caret/scroll in view
+          spellcheck: "false",
+        }),
       ],
     });
 
     const view = new EditorView({ state, parent: hostRef.current });
     viewRef.current = view;
+
+    // Ensure host fills parent so the scroller gets a bounded height
+    hostRef.current.style.height = "100%";
+    hostRef.current.style.minHeight = "0";
+    hostRef.current.style.overflow = "hidden";
 
     return () => {
       view.destroy();
