@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { db, type ShareRow } from "./db.js";
+import { pool, type ShareRow } from "./db.js";
 import {
   generateOwnerToken,
   generateShareId,
@@ -28,55 +28,58 @@ export type PublicShare = {
   updatedAt: string;
 };
 
+function toIso(value: string | Date): string {
+  return value instanceof Date ? value.toISOString() : String(value);
+}
+
 function toPublic(row: ShareRow): PublicShare {
   return {
     id: row.id,
     content: row.content,
     language: row.language,
     title: row.title,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
   };
 }
 
-export function createShare(): {
+export async function createShare(): Promise<{
   share: PublicShare;
   ownerToken: string;
-} {
+}> {
   const id = generateShareId();
   const ownerToken = generateOwnerToken();
   const ts = nowIso();
 
-  db.prepare(
+  await pool.query(
     `INSERT INTO shares
       (id, owner_token_hash, content, language, title, created_at, updated_at, last_accessed_at)
-     VALUES (?, ?, '', 'plaintext', 'Untitled', ?, ?, ?)`,
-  ).run(id, hashOwnerToken(ownerToken), ts, ts, ts);
+     VALUES ($1, $2, '', 'plaintext', 'Untitled', $3, $4, $5)`,
+    [id, hashOwnerToken(ownerToken), ts, ts, ts],
+  );
 
-  const row = db.prepare("SELECT * FROM shares WHERE id = ?").get(id) as ShareRow;
-  return { share: toPublic(row), ownerToken };
+  const { rows } = await pool.query<ShareRow>("SELECT * FROM shares WHERE id = $1", [id]);
+  return { share: toPublic(rows[0]), ownerToken };
 }
 
-export function getShare(id: string): PublicShare | null {
-  const row = db.prepare("SELECT * FROM shares WHERE id = ?").get(id) as
-    | ShareRow
-    | undefined;
+export async function getShare(id: string): Promise<PublicShare | null> {
+  const { rows } = await pool.query<ShareRow>("SELECT * FROM shares WHERE id = $1", [id]);
+  const row = rows[0];
   if (!row) return null;
 
-  db.prepare("UPDATE shares SET last_accessed_at = ? WHERE id = ?").run(
+  await pool.query("UPDATE shares SET last_accessed_at = $1 WHERE id = $2", [
     nowIso(),
     id,
-  );
+  ]);
   return toPublic(row);
 }
 
-export function updateShare(
+export async function updateShare(
   id: string,
   patch: z.infer<typeof updateShareSchema>,
-): PublicShare | null {
-  const row = db.prepare("SELECT * FROM shares WHERE id = ?").get(id) as
-    | ShareRow
-    | undefined;
+): Promise<PublicShare | null> {
+  const { rows } = await pool.query<ShareRow>("SELECT * FROM shares WHERE id = $1", [id]);
+  const row = rows[0];
   if (!row) return null;
 
   const content = patch.content ?? row.content;
@@ -88,31 +91,33 @@ export function updateShare(
     throw new Error("CONTENT_TOO_LARGE");
   }
 
-  db.prepare(
+  await pool.query(
     `UPDATE shares
-     SET content = ?, language = ?, title = ?, updated_at = ?, last_accessed_at = ?
-     WHERE id = ?`,
-  ).run(content, language, title, ts, ts, id);
+     SET content = $1, language = $2, title = $3, updated_at = $4, last_accessed_at = $5
+     WHERE id = $6`,
+    [content, language, title, ts, ts, id],
+  );
 
-  const updated = db.prepare("SELECT * FROM shares WHERE id = ?").get(id) as ShareRow;
-  return toPublic(updated);
+  const updated = await pool.query<ShareRow>("SELECT * FROM shares WHERE id = $1", [id]);
+  return toPublic(updated.rows[0]);
 }
 
-export function deleteShare(id: string, ownerToken: string): boolean {
-  const row = db.prepare("SELECT * FROM shares WHERE id = ?").get(id) as
-    | ShareRow
-    | undefined;
+export async function deleteShare(id: string, ownerToken: string): Promise<boolean> {
+  const { rows } = await pool.query<ShareRow>("SELECT * FROM shares WHERE id = $1", [id]);
+  const row = rows[0];
   if (!row) return false;
   if (!verifyOwnerToken(ownerToken, row.owner_token_hash)) return false;
 
-  db.prepare("DELETE FROM shares WHERE id = ?").run(id);
+  await pool.query("DELETE FROM shares WHERE id = $1", [id]);
   return true;
 }
 
-export function isOwner(id: string, ownerToken: string): boolean {
-  const row = db.prepare("SELECT owner_token_hash FROM shares WHERE id = ?").get(
-    id,
-  ) as { owner_token_hash: string } | undefined;
+export async function isOwner(id: string, ownerToken: string): Promise<boolean> {
+  const { rows } = await pool.query<{ owner_token_hash: string }>(
+    "SELECT owner_token_hash FROM shares WHERE id = $1",
+    [id],
+  );
+  const row = rows[0];
   if (!row) return false;
   return verifyOwnerToken(ownerToken, row.owner_token_hash);
 }

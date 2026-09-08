@@ -1,3 +1,4 @@
+import "dotenv/config";
 import compression from "compression";
 import cors from "cors";
 import express from "express";
@@ -6,7 +7,7 @@ import helmet from "helmet";
 import http from "node:http";
 import path from "node:path";
 import { Server as SocketServer } from "socket.io";
-import { getDbPath } from "./db.js";
+import { getDbLabel, initDb } from "./db.js";
 import { createApiRouter } from "./routes.js";
 import { getShare, updateShare } from "./shares.js";
 
@@ -27,14 +28,12 @@ const io = new SocketServer(server, {
     methods: ["GET", "POST"],
   },
   maxHttpBufferSize: 2e6,
-  // Polling first helps some mobile browsers / strict Wi‑Fi APs
   transports: ["polling", "websocket"],
 });
 
 app.set("trust proxy", 1);
 app.use(
   helmet({
-    // Avoid blank pages on mobile when loading module scripts / fonts
     crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" },
     contentSecurityPolicy: isProd
@@ -59,7 +58,6 @@ app.use(
             "base-uri": ["'self'"],
             "form-action": ["'self'"],
             "frame-ancestors": ["'self'"],
-            // Don't upgrade http://192.168.x.x → https (breaks LAN phone access)
             "upgrade-insecure-requests": null,
           },
         }
@@ -77,13 +75,25 @@ app.use(express.json({ limit: "2.5mb" }));
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
-    db: getDbPath(),
+    db: getDbLabel(),
     env: isProd ? "production" : "development",
     serveClient,
   });
 });
 
 app.use("/api", createApiRouter());
+
+app.use(
+  (
+    err: unknown,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error." });
+  },
+);
 
 type RoomPresence = Map<string, { name: string; color: string }>;
 const presenceByShare = new Map<string, RoomPresence>();
@@ -93,44 +103,49 @@ const COLORS = ["#e8a54b", "#5ec4a8", "#7eb6e8", "#e07a7a", "#c4a0e8", "#e8d35e"
 io.on("connection", (socket) => {
   let joinedShareId: string | null = null;
 
-  socket.on("join", (payload: { shareId?: string; name?: string }) => {
-    const shareId = payload?.shareId;
-    if (!shareId || typeof shareId !== "string") return;
+  socket.on("join", async (payload: { shareId?: string; name?: string }) => {
+    try {
+      const shareId = payload?.shareId;
+      if (!shareId || typeof shareId !== "string") return;
 
-    const share = getShare(shareId);
-    if (!share) {
-      socket.emit("error-msg", { error: "Share not found." });
-      return;
+      const share = await getShare(shareId);
+      if (!share) {
+        socket.emit("error-msg", { error: "Share not found." });
+        return;
+      }
+
+      if (joinedShareId) {
+        socket.leave(joinedShareId);
+        leavePresence(joinedShareId, socket.id);
+      }
+
+      joinedShareId = shareId;
+      socket.join(shareId);
+
+      if (!presenceByShare.has(shareId)) {
+        presenceByShare.set(shareId, new Map());
+      }
+      const room = presenceByShare.get(shareId)!;
+      const color = COLORS[room.size % COLORS.length];
+      const name =
+        (typeof payload.name === "string" && payload.name.slice(0, 24)) ||
+        `Guest ${room.size + 1}`;
+      room.set(socket.id, { name, color });
+
+      socket.emit("init", {
+        share,
+        peers: [...room.entries()].map(([id, p]) => ({ id, ...p })),
+      });
+      socket.to(shareId).emit("peer-join", { id: socket.id, name, color });
+    } catch (err) {
+      console.error("join failed", err);
+      socket.emit("error-msg", { error: "Failed to join share." });
     }
-
-    if (joinedShareId) {
-      socket.leave(joinedShareId);
-      leavePresence(joinedShareId, socket.id);
-    }
-
-    joinedShareId = shareId;
-    socket.join(shareId);
-
-    if (!presenceByShare.has(shareId)) {
-      presenceByShare.set(shareId, new Map());
-    }
-    const room = presenceByShare.get(shareId)!;
-    const color = COLORS[room.size % COLORS.length];
-    const name =
-      (typeof payload.name === "string" && payload.name.slice(0, 24)) ||
-      `Guest ${room.size + 1}`;
-    room.set(socket.id, { name, color });
-
-    socket.emit("init", {
-      share,
-      peers: [...room.entries()].map(([id, p]) => ({ id, ...p })),
-    });
-    socket.to(shareId).emit("peer-join", { id: socket.id, name, color });
   });
 
   socket.on(
     "content-change",
-    (payload: {
+    async (payload: {
       shareId?: string;
       content?: string;
       language?: string;
@@ -142,7 +157,7 @@ io.on("connection", (socket) => {
       if (typeof payload.content !== "string") return;
 
       try {
-        const share = updateShare(shareId, {
+        const share = await updateShare(shareId, {
           content: payload.content,
           language: payload.language,
           title: payload.title,
@@ -223,9 +238,17 @@ server.on("error", (err: NodeJS.ErrnoException) => {
   throw err;
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`OnlineShare listening on http://${HOST}:${PORT}`);
-  console.log(`Mode: ${isProd ? "production" : "development"} (serveClient=${serveClient})`);
-  console.log(`SQLite: ${getDbPath()}`);
-  console.log(`LAN: open http://<your-pc-ip>:${PORT} on your phone (same Wi‑Fi)`);
+async function main() {
+  await initDb();
+  server.listen(PORT, HOST, () => {
+    console.log(`OnlineShare listening on http://${HOST}:${PORT}`);
+    console.log(`Mode: ${isProd ? "production" : "development"} (serveClient=${serveClient})`);
+    console.log(`Database: ${getDbLabel()}`);
+    console.log(`LAN: open http://<your-pc-ip>:${PORT} on your phone (same Wi‑Fi)`);
+  });
+}
+
+main().catch((err) => {
+  console.error("Failed to start OnlineShare:", err);
+  process.exit(1);
 });

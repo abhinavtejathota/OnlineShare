@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { createShare, saveOwnerToken } from "../api";
+import { Logo } from "../components/Logo";
 
 const PREVIEW = `// Share anything — code, notes, configs
 function greet(name) {
@@ -32,7 +33,7 @@ export function LandingPage() {
     <div className="landing">
       <nav className="landing-nav">
         <div className="brand">
-          <span className="brand-mark" aria-hidden />
+          <Logo size={30} />
           OnlineShare
         </div>
         <button type="button" className="btn btn-ghost btn-sm" onClick={startShare} disabled={busy}>

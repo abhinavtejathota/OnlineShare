@@ -13,7 +13,9 @@ dist/
 credentials.json
 service-account*.json
 
-# SQLite runtime sidecars (main DB data/onlineshare.db is committed as a seed file)
+# Local SQLite leftovers (app uses Supabase Postgres now)
+data/
+*.db
 *.db-journal
 *.db-wal
 *.db-shm

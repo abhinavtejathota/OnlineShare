@@ -16,6 +16,6 @@ services:
         value: production
       - key: NODE_VERSION
         value: "22.14.0"
-
-# For durable SQLite across deploys, upgrade to a plan with a disk and mount it
-# at /var/data, then set DATA_DIR=/var/data in the service env.
+      # Paste your Supabase connection string in the Render dashboard
+      - key: DATABASE_URL
+        sync: false

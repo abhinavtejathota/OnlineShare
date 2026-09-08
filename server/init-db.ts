@@ -1,10 +1,8 @@
-/**
- * Creates / migrates the local SQLite file at data/onlineshare.db
- * Run: npx tsx server/init-db.ts
- */
-import { db, getDbPath } from "./db.js";
+import "dotenv/config";
+import { getDbLabel, initDb, pool } from "./db.js";
 
-const row = db.prepare("SELECT COUNT(*) AS n FROM shares").get() as { n: number };
-console.log(`SQLite ready at: ${getDbPath()}`);
-console.log(`Shares in database: ${row.n}`);
-db.close();
+await initDb();
+const count = await pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM shares");
+console.log(`Postgres ready → ${getDbLabel()}`);
+console.log(`Shares in database: ${count.rows[0]?.n ?? 0}`);
+await pool.end();

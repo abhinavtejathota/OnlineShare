@@ -1,38 +1,47 @@
-import { DatabaseSync } from "node:sqlite";
-import fs from "node:fs";
-import path from "node:path";
+import pg from "pg";
 
-/** On Render, mount a persistent disk and set DATA_DIR (e.g. /var/data). */
-const dataDir = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), "data"));
-const dbPath = path.join(dataDir, "onlineshare.db");
+const { Pool } = pg;
 
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+function buildDatabaseUrl(): string {
+  if (process.env.DATABASE_URL?.trim()) {
+    return process.env.DATABASE_URL.trim();
+  }
+
+  const host = process.env.PGHOST;
+  const port = process.env.PGPORT || "5432";
+  const database = process.env.PGDATABASE || "postgres";
+  const user = process.env.PGUSER;
+  const password = process.env.PGPASSWORD;
+
+  if (host && user && password) {
+    const encUser = encodeURIComponent(user);
+    const encPass = encodeURIComponent(password);
+    return `postgresql://${encUser}:${encPass}@${host}:${port}/${database}`;
+  }
+
+  throw new Error(
+    "DATABASE_URL is required (Supabase Postgres). Set it in .env or your host env vars.",
+  );
 }
 
-/**
- * Built-in Node SQLite (no native addon). Works on Node 22+ and 24+ without rebuilds.
- * Uses the same on-disk .db file as before.
- */
-export const db = new DatabaseSync(dbPath);
+/** Strip sslmode from URL — we set SSL explicitly on the Pool for Supabase. */
+function connectionStringWithoutSslMode(url: string): string {
+  try {
+    const u = new URL(url);
+    u.searchParams.delete("sslmode");
+    u.searchParams.delete("uselibpqcompat");
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
 
-db.exec("PRAGMA journal_mode = WAL;");
-db.exec("PRAGMA foreign_keys = ON;");
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS shares (
-    id TEXT PRIMARY KEY,
-    owner_token_hash TEXT NOT NULL,
-    content TEXT NOT NULL DEFAULT '',
-    language TEXT NOT NULL DEFAULT 'plaintext',
-    title TEXT NOT NULL DEFAULT 'Untitled',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    last_accessed_at TEXT NOT NULL
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_shares_updated ON shares(updated_at);
-`);
+export const pool = new Pool({
+  connectionString: connectionStringWithoutSslMode(buildDatabaseUrl()),
+  ssl: { rejectUnauthorized: false },
+  max: 10,
+  idleTimeoutMillis: 30_000,
+});
 
 export type ShareRow = {
   id: string;
@@ -40,11 +49,34 @@ export type ShareRow = {
   content: string;
   language: string;
   title: string;
-  created_at: string;
-  updated_at: string;
-  last_accessed_at: string;
+  created_at: string | Date;
+  updated_at: string | Date;
+  last_accessed_at: string | Date;
 };
 
-export function getDbPath(): string {
-  return dbPath;
+export async function initDb(): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shares (
+      id TEXT PRIMARY KEY,
+      owner_token_hash TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      language TEXT NOT NULL DEFAULT 'plaintext',
+      title TEXT NOT NULL DEFAULT 'Untitled',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_accessed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_shares_updated ON shares (updated_at);
+  `);
+}
+
+export function getDbLabel(): string {
+  try {
+    const raw = buildDatabaseUrl().replace(/^postgresql:/i, "http:");
+    const url = new URL(raw);
+    return `postgres://${url.hostname}:${url.port || "5432"}${url.pathname}`;
+  } catch {
+    return "postgres (configured)";
+  }
 }

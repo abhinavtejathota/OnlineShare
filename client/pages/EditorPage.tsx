@@ -11,6 +11,7 @@ import {
   verifyOwner,
 } from "../api";
 import { CodeEditor, LANGUAGES } from "../components/CodeEditor";
+import { Logo } from "../components/Logo";
 
 type Peer = { id: string; name: string; color: string };
 
@@ -261,7 +262,7 @@ export function EditorPage() {
     <div className="editor-page">
       <header className="toolbar">
         <Link to="/" className="toolbar-brand" title="Home">
-          <span className="brand-mark" aria-hidden />
+          <Logo size={22} />
           OnlineShare
         </Link>
 

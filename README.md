@@ -34,7 +34,7 @@ This document explains **what the product does**, **how the pieces fit together*
 | Live editing | Changes sync to other open viewers over Socket.io |
 | Languages | CodeMirror with JS/TS, Python, Java, C/C++, Rust, HTML, CSS, JSON, Markdown, SQL, plaintext |
 | Owner delete | Only the creating browser (with the owner token) can delete the pad |
-| Persistence | Content is stored in a local SQLite file (`data/onlineshare.db`) |
+| Persistence | Content is stored in **Supabase Postgres** (survives Render sleep) |
 | Mobile | Responsive toolbar/editor; works over LAN IP and on phones |
 
 **Trust model (same idea as codeshare):** the link is the secret. If you send someone the URL, they can edit. That is intentional. What we harden is **guessing IDs** and **deleting without being the owner**.
@@ -51,7 +51,7 @@ This document explains **what the product does**, **how the pieces fit together*
 │                     │  WS     │  Socket.io                           │
 │                     │◄───────►│  join room, broadcast edits          │
 └─────────────────────┘         │                                      │
-                                │  node:sqlite → data/onlineshare.db   │
+                                │  pg → Supabase Postgres              │
                                 └──────────────────────────────────────┘
 ```
 
@@ -70,11 +70,11 @@ In **development**, Vite runs the UI on `:5173` and proxies `/api` + `/socket.io
 | API | Express 4 |
 | Realtime | Socket.io 4 |
 | Validation | Zod |
-| DB | Node.js built-in `node:sqlite` (`DatabaseSync`) |
+| DB | **Supabase Postgres** via `pg` (`DATABASE_URL`) |
 | IDs / crypto | `nanoid` + Node `crypto` |
 | Hardening | Helmet, express-rate-limit, compression |
 
-We intentionally **do not** use `better-sqlite3` (native addon). It broke across Node 22 vs 24. Built-in SQLite avoids rebuild/ABI issues on local machines and on Render.
+Pads survive Render free-tier spin-down because the database lives on Supabase, not on Render’s ephemeral disk.
 
 ---
 
@@ -99,7 +99,7 @@ We intentionally **do not** use `better-sqlite3` (native addon). It broke across
 4. Server adds the socket to a room named after the share id and sends `init`.
 5. On typing, the client:
    - Broadcasts `content-change` over the socket (live for peers)
-   - Debounced `PATCH /api/shares/:id` (durable write to SQLite)
+   - Debounced `PATCH /api/shares/:id` (durable write to Postgres)
 
 ### 3. Delete (owner only)
 
@@ -170,7 +170,7 @@ Sets `NODE_ENV=production` then imports the compiled server. This avoids the com
 
 ### Shares domain — `server/shares.ts`
 
-CRUD-ish helpers on top of SQLite:
+CRUD-ish helpers on top of Postgres:
 
 - `createShare` / `getShare` / `updateShare` / `deleteShare` / `isOwner`
 - Zod schema for patches (`content`, `language`, `title`)
@@ -193,7 +193,7 @@ ID generation, owner token generation, hashing, timing-safe verify.
 
 ### Database — `server/db.ts`
 
-Opens `DATA_DIR/onlineshare.db` (default `./data/onlineshare.db`), enables WAL, creates `shares` table if missing.
+Creates a `pg` connection pool from `DATABASE_URL` (or `PG*` parts), ensures the `shares` table exists on startup (`initDb()`), and never logs the password.
 
 ---
 
@@ -237,7 +237,7 @@ Custom CSS (`client/styles.css`): dark charcoal + amber accent, Outfit + IBM Ple
 ```
 Client A types
     │
-    ├─► socket.emit("content-change") ──► server updates SQLite
+    ├─► socket.emit("content-change") ──► server updates Postgres
     │                                        │
     │                                        └─► socket.to(shareId).emit("content-update")
     │                                                    │
@@ -263,7 +263,7 @@ Socket events used:
 
 ## Database
 
-**File:** `data/onlineshare.db` (or `$DATA_DIR/onlineshare.db`)
+**Host:** Supabase Postgres (connection string in `DATABASE_URL`).
 
 ```sql
 CREATE TABLE shares (
@@ -272,18 +272,24 @@ CREATE TABLE shares (
   content          TEXT NOT NULL DEFAULT '',
   language         TEXT NOT NULL DEFAULT 'plaintext',
   title            TEXT NOT NULL DEFAULT 'Untitled',
-  created_at       TEXT NOT NULL,
-  updated_at       TEXT NOT NULL,
-  last_accessed_at TEXT NOT NULL
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_accessed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ```
 
-- Engine: Node built-in SQLite (`node:sqlite`), started with `--experimental-sqlite` (required on Node 22; fine on Node 24+)
-- Journal: WAL
-- No external DB server, no cloud DB account — just a file in the repo/host
+- Client: `pg` Pool with SSL
+- Schema is auto-created on server boot
+- **Delete forever** runs `DELETE FROM shares WHERE id = $1` (row fully removed)
+- Data survives Render restarts/sleep because it lives in Supabase
 
-On Render’s **free** disk, this file is ephemeral (lost on redeploy) unless you attach a **persistent disk** and set `DATA_DIR`.
+Local `.env` (gitignored):
 
+```bash
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/postgres?sslmode=require
+```
+
+On Render: set the same `DATABASE_URL` in the service Environment tab.
 ---
 
 ## Project structure
@@ -298,19 +304,20 @@ OnlineShare/
 │   ├── main.tsx
 │   ├── styles.css
 │   └── index.html
-├── server/                 # Express + Socket.io + SQLite
+├── server/                 # Express + Socket.io + Postgres
 │   ├── index.ts            # HTTP/Socket entry
 │   ├── routes.ts           # REST routes + rate limits
 │   ├── shares.ts           # Domain logic
 │   ├── security.ts         # IDs + owner tokens
-│   ├── db.ts               # SQLite open + schema
+│   ├── db.ts               # Supabase/pg pool + schema
 │   ├── init-db.ts          # Optional DB bootstrap CLI
 │   ├── tsconfig.json       # IDE / typecheck (noEmit)
 │   └── tsconfig.build.json # Emits JS to dist/server
 ├── scripts/
 │   └── start.mjs           # Production starter (sets NODE_ENV)
-├── data/
-│   └── onlineshare.db      # SQLite database file
+├── client/public/
+│   ├── logo.png            # Brand logo
+│   └── favicon.png
 ├── dist/                   # Build output (gitignored)
 │   ├── client/             # Static SPA
 │   └── server/             # Compiled API
@@ -442,17 +449,12 @@ You can also apply `render.yaml` as a Blueprint.
 
 ### Persistence on Render
 
-Free instances wipe the filesystem on restart/redeploy.
-
-For durable pads:
-
-1. Add a **persistent disk**, mount at `/var/data`
-2. Set `DATA_DIR=/var/data`
+Pad data lives in **Supabase**, so Render free-tier sleep does **not** wipe shares. Set `DATABASE_URL` in the Render dashboard (same value as local `.env`).
 
 ### Why this deploy shape
 
-- One service = simpler CORS, cookies not needed, Socket.io on same host
-- No native C++ addon to compile on Render
+- One service = simpler CORS, Socket.io on same host
+- External Postgres = durable data without a Render disk
 - Static SPA + API from one process matches how users share a single URL
 
 ---
@@ -461,10 +463,10 @@ For durable pads:
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
+| `DATABASE_URL` | _(required)_ | Supabase Postgres connection string |
 | `PORT` | `3847` | HTTP port (Render sets this) |
 | `HOST` | `0.0.0.0` | Bind address |
 | `NODE_ENV` | set by `scripts/start.mjs` in prod | Affects Helmet etc. |
-| `DATA_DIR` | `./data` | Directory for `onlineshare.db` |
 | `CLIENT_ORIGIN` | reflect / allow | Optional CORS origin override |
 
 ---
@@ -473,7 +475,7 @@ For durable pads:
 
 1. **Link secrecy over accounts** — No login. Faster UX; owner power is browser-local. Fine for ephemeral paste sharing; not a substitute for private repos.
 2. **Last-write-wins sync** — Simple and enough for this product. Full CRDT (e.g. Yjs) would be the next step for Google-Docs-grade concurrency.
-3. **Built-in SQLite** — Portable across Node versions; experimental flag on Node 22. Avoids `better-sqlite3` ABI pain.
+3. **Supabase Postgres** — Data survives Render sleep; connection via `DATABASE_URL` only (never commit secrets).
 4. **Owner token in localStorage** — Convenient; XSS on the origin could steal it. CSP is part of the mitigation. HttpOnly cookies would need a login/session model.
 5. **Dual write (socket + PATCH)** — Socket path updates DB and peers; HTTP PATCH is a safety net if the socket drops mid-session.
 6. **Mobile** — Large CodeMirror bundle; boot splash + polling-first sockets improve first paint and flaky mobile networks.
@@ -485,5 +487,5 @@ For durable pads:
 > **Create** → unguessable id + owner secret  
 > **Share the URL** → others can edit live  
 > **Owner token in your browser** → only you can delete  
-> **SQLite file** → content survives process restarts (and Render disks if configured)  
+> **Supabase Postgres** → content survives Render sleep  
 > **One Node process** → API + websockets + static UI for deploy
